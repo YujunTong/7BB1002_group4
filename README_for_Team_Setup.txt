@@ -38,3 +38,4 @@ Rscript your_script.R
 /scratch/grp/msc_appbio/Group4_ABCC/tools/micromamba \
   install -p /scratch/grp/msc_appbio/Group4_ABCC/envs/yeast_rnaseq_cli \
   r-base=3.6.1 r-ggplot2=3.3.3 r-dplyr=1.0.2 ...
+# install DESeq2 individually in install_deseq2.R
