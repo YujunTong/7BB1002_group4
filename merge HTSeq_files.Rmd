@@ -1,0 +1,63 @@
+---
+title: "merge HTSeq_files"
+author: "zach"
+date: "2025-12-08"
+output: html_document
+---
+```{r}
+getwd()
+setwd("C:/Users/19918/Desktop/HTSEQ DESEQ2")
+list.files("output")
+
+
+# Merge HTSeq-count files
+
+library(tidyverse)
+
+# Set working directory (your folder)
+setwd("C:/Users/19918/Desktop/HTSEQ DESEQ2")
+
+# Folder containing your HTSeq files
+counts_dir <- "C:/Users/19918/Desktop/HTSEQ DESEQ2"
+
+# List all HTSeq files
+files <- list.files(counts_dir, pattern = "_counts.txt$", full.names = TRUE)
+
+# Check if files found
+if (length(files) == 0) {
+  stop("No *_counts.txt files found. Check your folder path or file names.")
+}
+
+# Ensure sorted order
+files <- sort(files)
+print(paste("Found", length(files), "HTSeq files."))
+
+# Read one HTSeq file
+read_htseq <- function(file) {
+  sample_id <- gsub("_counts.txt", "", basename(file))
+  df <- read.table(file, header = FALSE, col.names = c("gene", sample_id))
+  df <- df[!grepl("^__", df$gene), ]  # remove HTSeq summary rows
+  return(df)
+}
+
+# Load all files
+df_list <- lapply(files, read_htseq)
+
+# Merge all count files on gene
+merged <- reduce(df_list, full_join, by = "gene")
+
+# Sort genes alphabetically
+merged <- merged[order(merged$gene), ]
+
+# Save output matrix
+write.table(
+  merged,
+  file = "count_matrix.tsv",
+  sep = "\t",
+  row.names = FALSE,
+  quote = FALSE
+)
+
+cat("Merged matrix saved as: count_matrix.tsv\n")
+
+```
