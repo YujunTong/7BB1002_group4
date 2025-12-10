@@ -1,11 +1,19 @@
 #!/bin/bash
 
 # Activate conda environment
-conda activate /cephfs/volumes/hpc_data_grp/msc_appbio/70e465a3-ea70-4bd6-b919-9da7af124271/Group4_ABCC/env_rnaseq   
+
+export MAMBA_EXE=/scratch/grp/msc_appbio/Group4_ABCC/tools/micromamba
+eval "$($MAMBA_EXE shell hook --shell bash)"
+
+echo "sucessfully activate environment 1"
+
+micromamba activate /scratch/grp/msc_appbio/Group4_ABCC/envs/yeast_rnaseq_cli
+
+echo "successfully activate environment 2"
 
 # Define directories
 INPUT_DIR="/scratch/grp/msc_appbio/Group4_ABCC/raw_data/raw_data_fastq/rna_seq_fastq"
-OUTPUT_DIR="/scratch/grp/msc_appbio/Group4_ABCC/output"
+OUTPUT_DIR="/scratch/grp/msc_appbio/Group4_ABCC/output/new_cut_adapt"
 
 echo "Starting Cutadapt trimming..."
 
@@ -24,9 +32,12 @@ do
         -a $ADAPTER \
         -q 20 \
         --minimum-length 30 \
+        -j 4 \
         -o "$OUTFILE" \
         "$FQ"
 done
 
 echo "Done! Trimmed files saved in: $OUTPUT_DIR"
 
+which cutadapt
+cutadapt --version
