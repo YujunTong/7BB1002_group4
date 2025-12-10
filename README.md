@@ -12,6 +12,7 @@ The detail for team set up is in the README_for_Team_Setup.txt
 ## HPC SLURM piplines
 
 To run the slurms, change the input and output of the dir.
+Run those slurms by 'sbatch'
 
 ## R SCripts
 
