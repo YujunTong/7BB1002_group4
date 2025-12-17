@@ -16,3 +16,7 @@ OUTPUT_DIR="/scratch/grp/msc_appbio/k25022317/fastqc_results"
 fastqc -t 4 ${INPUT_DIR}/*.fastq.gz -o $OUTPUT_DIR
 
 echo "FastQC finished. Results saved in: $OUTPUT_DIR"
+
+# show which fastqc was used
+which fastqc
+fastqc --version
