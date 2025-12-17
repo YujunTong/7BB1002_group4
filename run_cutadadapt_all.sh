@@ -1,15 +1,11 @@
 #!/bin/bash
 
-# Activate conda environment
-
+# Activate the environment
 export MAMBA_EXE=/scratch/grp/msc_appbio/Group4_ABCC/tools/micromamba
 eval "$($MAMBA_EXE shell hook --shell bash)"
-
-echo "sucessfully activate environment 1"
-
 micromamba activate /scratch/grp/msc_appbio/Group4_ABCC/envs/yeast_rnaseq_cli
 
-echo "successfully activate environment 2"
+echo "successfully activate environment"
 
 # Define directories
 INPUT_DIR="/scratch/grp/msc_appbio/Group4_ABCC/raw_data/raw_data_fastq/rna_seq_fastq"
@@ -20,7 +16,7 @@ echo "Starting Cutadapt trimming..."
 # NEBNext / Illumina TruSeq adapter (single-end)
 ADAPTER="AGATCGGAAGAGCACACGTCTGAACTCCAGTCA"
 
-# Loop through all FASTQ files
+# Loop through all FASTQ files to perform cutadapt 
 for FQ in "$INPUT_DIR"/*.fastq.gz
 do
     BASENAME=$(basename "$FQ")
@@ -39,5 +35,6 @@ done
 
 echo "Done! Trimmed files saved in: $OUTPUT_DIR"
 
+# Show which cutadapt was used
 which cutadapt
 cutadapt --version
