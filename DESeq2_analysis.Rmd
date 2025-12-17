@@ -14,28 +14,37 @@ library(DT)
 
 ui <- fluidPage(
 
+    ## Application title displayed at the top
     titlePanel("RNA-seq DESeq2 Explorer — With Pathway Gene Highlighting"),
 
     sidebarLayout(
         sidebarPanel(
 
+            ## Upload raw count matrix (genes x samples)
             fileInput("counts", "Upload count_matrix.tsv"),
+
+            ## Upload sample metadata (rows = samples)
             fileInput("sampleinfo", "Upload sample_info.csv"),
 
+            ## Choose which metadata column defines the contrast
             selectInput("contrast_group",
                         "Choose grouping column:",
                         choices = c("condition", "strain_group"),
                         selected = "condition"),
 
+            ## UI generated dynamically based on selected grouping
             uiOutput("level_selector"),
 
+            ## Gene highlighting section
             h4("Select genes to inspect:"),
             uiOutput("gene_select_ui"),
 
+            ## Button ensures DESeq2 only runs when explicitly requested
             actionButton("run", "Run DESeq2", class = "btn-primary")
         ),
 
         mainPanel(
+            ## Results are organised into tabs
             tabsetPanel(
                 tabPanel("PCA Plot", plotOutput("pcaPlot", height="500px")),
                 tabPanel("MA Plot", plotOutput("maPlot", height="500px")),
@@ -47,50 +56,81 @@ ui <- fluidPage(
     )
 )
 
+
 server <- function(input, output, session) {
 
     ### ===================== Data Loading ======================
 
+       ## Reactive expression to load the count matrix
+    ## Triggered automatically when a file is uploaded
     counts_data <- reactive({
         req(input$counts)
-        read.table(input$counts$datapath, header = TRUE, row.names = 1, sep = "\t")
+        read.table(
+            input$counts$datapath,
+            header = TRUE,
+            row.names = 1,
+            sep = "\t"
+        )
     })
 
+    ## Reactive expression to load sample metadata
     sample_info <- reactive({
         req(input$sampleinfo)
-        read.csv(input$sampleinfo$datapath, row.names = 1)
+        read.csv(
+            input$sampleinfo$datapath,
+            row.names = 1
+        )
     })
 
 
     ### ===================== Dynamic Contrast UI ======================
 
+        ## Dynamically generate contrast selector
+    ## Levels depend on the selected grouping column
     output$level_selector <- renderUI({
         req(sample_info())
+
         cond_col <- input$contrast_group
         levs <- unique(sample_info()[[cond_col]])
-        selectInput("contrast",
-                    "Choose comparison:",
-                    choices = combn(levs, 2, FUN=function(x) paste(x[1], x[2], sep=" vs ")))
+
+        ## Generate all pairwise comparisons
+        selectInput(
+            "contrast",
+            "Choose comparison:",
+            choices = combn(
+                levs,
+                2,
+                FUN = function(x) paste(x[1], x[2], sep = " vs ")
+            )
+        )
     })
 
 
     ### ===================== DESeq2 run ======================
 
+    
+    ## This avoids unnecessary re-computation
     dds_result <- eventReactive(input$run, {
+
         count_matrix <- counts_data()
         sampleinfo <- sample_info()
 
+        ## Ensure sample order matches between counts and metadata
         stopifnot(all(colnames(count_matrix) == rownames(sampleinfo)))
 
         cond_col <- input$contrast_group
 
+        ## Create DESeq2 dataset
         dds <- DESeqDataSetFromMatrix(
             countData = count_matrix,
             colData = sampleinfo,
             design = as.formula(paste("~", cond_col))
         )
 
+        ## Filter low-expression genes
         dds <- dds[rowSums(counts(dds)) > 10, ]
+
+        ## Perform normalization, dispersion estimation and model fitting
         dds <- DESeq(dds)
 
         return(dds)
@@ -98,8 +138,9 @@ server <- function(input, output, session) {
 
 
     ### ===================== Pathway Gene Mapping ======================
-    # You fill in these IDs (you already found them)
-
+    #    ## Manually defined pathway gene mapping
+    ## Names = readable gene symbols
+    ## Values = internal gene IDs used in the count matrix
     pathway_gene_map <- reactive({
 
         c(
@@ -114,6 +155,7 @@ server <- function(input, output, session) {
 
     ### ===================== Gene selector UI ======================
 
+       ## Allows users to select genes for highlighting
     output$gene_select_ui <- renderUI({
         selectizeInput(
             "targetGenes",
@@ -127,39 +169,60 @@ server <- function(input, output, session) {
 
     ### ===================== DE Results with qvalues ======================
 
+       ## Extract DE results for selected contrast
+    ## Adds independent FDR correction using fdrtool
     de_results_df <- reactive({
         req(dds_result())
 
         cond_col <- input$contrast_group
         groups <- strsplit(input$contrast, " vs ")[[1]]
 
-        res <- results(dds_result(), contrast = c(cond_col, groups[1], groups[2]))
+        ## Extract DESeq2 results
+        res <- results(
+            dds_result(),
+            contrast = c(cond_col, groups[1], groups[2])
+        )
+
         df <- as.data.frame(res)
 
-        # Add fdrtool q-values
-        df$qvalue <- fdrtool(df$pvalue, statistic="pvalue", plot=FALSE)$qval
+        ## Compute q-values from raw p-values
+        df$qvalue <- fdrtool(
+            df$pvalue,
+            statistic = "pvalue",
+            plot = FALSE
+        )$qval
 
         return(df)
     })
 
-
     ### ===================== PCA ======================
 
-    output$pcaPlot <- renderPlot({
+       output$pcaPlot <- renderPlot({
         req(dds_result())
 
+        ## Variance stabilizing transformation
         vsd <- vst(dds_result())
+
+        ## PCA on transformed counts
         pca <- prcomp(t(assay(vsd)))
 
-        percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+        percentVar <- round(
+            100 * pca$sdev^2 / sum(pca$sdev^2),
+            1
+        )
+
         cond <- dds_result()[[input$contrast_group]]
 
-        df <- data.frame(PC1 = pca$x[,1], PC2 = pca$x[,2], cond = cond)
+        df <- data.frame(
+            PC1 = pca$x[,1],
+            PC2 = pca$x[,2],
+            cond = cond
+        )
 
         ggplot(df, aes(PC1, PC2, color = cond)) +
             geom_point(size = 5, alpha = .8) +
-            geom_hline(yintercept=0, linetype="dashed", color="grey50") +
-            geom_vline(xintercept=0, linetype="dashed", color="grey50") +
+            geom_hline(yintercept = 0, linetype = "dashed", color = "grey50") +
+            geom_vline(xintercept = 0, linetype = "dashed", color = "grey50") +
             xlab(paste0("PC1 (", percentVar[1], "%)")) +
             ylab(paste0("PC2 (", percentVar[2], "%)")) +
             theme_minimal(base_size = 16)
@@ -168,84 +231,97 @@ server <- function(input, output, session) {
 
     ### ===================== MA Plot ======================
 
-    output$maPlot <- renderPlot({
+       output$maPlot <- renderPlot({
 
-    df <- de_results_df()
-    df$log10base <- log10(df$baseMean + 1)
+        df <- de_results_df()
+        df$log10base <- log10(df$baseMean + 1)
 
-    sel_map <- pathway_gene_map()
-    highlight_ids <- sel_map[input$targetGenes]
+        sel_map <- pathway_gene_map()
+        highlight_ids <- sel_map[input$targetGenes]
 
-    ggplot(df, aes(log10base, log2FoldChange)) +
-        
-        # ---- Normal MA colour ----
-        geom_point(aes(color = (qvalue < 0.1)), alpha = 0.5) +
-        scale_color_manual(values = c("grey60", "red"), name = "Significant (q<0.1)") +
+        ggplot(df, aes(log10base, log2FoldChange)) +
 
-        # ---- highlight ----
-        geom_point(
-            data = df[rownames(df) %in% highlight_ids, ],
-            color = "gold", size = 3, shape = 8
-        ) +
+            ## Base MA plot with significance colouring
+            geom_point(aes(color = (qvalue < 0.1)), alpha = 0.5) +
+            scale_color_manual(
+                values = c("grey60", "red"),
+                name = "Significant (q < 0.1)"
+            ) +
 
-        theme_minimal(base_size = 16) +
-        xlab("log10(baseMean)") +
-        ggtitle("MA Plot (with Highlighted Pathway Genes)")
-})
+            ## Overlay highlighted pathway genes
+            geom_point(
+                data = df[rownames(df) %in% highlight_ids, ],
+                color = "gold",
+                size = 3,
+                shape = 8
+            ) +
+
+            theme_minimal(base_size = 16) +
+            xlab("log10(baseMean)") +
+            ggtitle("MA Plot (with Highlighted Pathway Genes)")
+    })
 
 
 
     ### ===================== Volcano Plot ======================
 
-   output$volcanoPlot <- renderPlot({
+      output$volcanoPlot <- renderPlot({
 
-    df <- de_results_df()
-    df$log10p <- -log10(df$pvalue)
+        df <- de_results_df()
+        df$log10p <- -log10(df$pvalue)
 
-    sel_map <- pathway_gene_map()
-    highlight_ids <- sel_map[input$targetGenes]
+        sel_map <- pathway_gene_map()
+        highlight_ids <- sel_map[input$targetGenes]
 
-    ggplot(df, aes(log2FoldChange, log10p)) +
+        ggplot(df, aes(log2FoldChange, log10p)) +
 
-        # ---- Normal significance colour ----
-        geom_point(aes(color = (qvalue < 0.1)), alpha = 0.6) +
-        scale_color_manual(values=c("black","red"), name="Significant (q<0.1)") +
+            ## Significance colouring
+            geom_point(aes(color = (qvalue < 0.1)), alpha = 0.6) +
+            scale_color_manual(
+                values = c("black", "red"),
+                name = "Significant (q < 0.1)"
+            ) +
 
-        # ---- cover：highlight pathway gene ----
-        geom_point(
-            data = df[rownames(df) %in% highlight_ids, ],
-            color = "gold", size = 3, shape = 8
-        ) +
+            ## Highlight pathway genes
+            geom_point(
+                data = df[rownames(df) %in% highlight_ids, ],
+                color = "gold",
+                size = 3,
+                shape = 8
+            ) +
 
-        theme_minimal(base_size = 16) +
-        xlab("log2 Fold Change") +
-        ylab("-log10(p-value)") +
-        ggtitle("Volcano Plot (with Highlighted Pathway Genes)") +
-        geom_hline(yintercept = -log10(0.05), linetype="dashed", color="blue") +
-        geom_vline(xintercept = c(-1,1), linetype="dashed", color="blue")
-})
+            theme_minimal(base_size = 16) +
+            xlab("log2 Fold Change") +
+            ylab("-log10(p-value)") +
+            ggtitle("Volcano Plot (with Highlighted Pathway Genes)") +
+            geom_hline(yintercept = -log10(0.05), linetype = "dashed", color = "blue") +
+            geom_vline(xintercept = c(-1, 1), linetype = "dashed", color = "blue")
+    })
 
 
 
     ### ===================== Selected Gene Table ======================
 
-    output$geneStatsTable <- renderDataTable({
+        output$geneStatsTable <- renderDataTable({
 
-    df <- de_results_df()
-    selected <- input$targetGenes
-    if (length(selected) == 0) return(NULL)
+        df <- de_results_df()
+        selected <- input$targetGenes
 
-    ids <- pathway_gene_map()[selected]
-    out <- df[rownames(df) %in% ids, ]
+        ## Do nothing if no genes selected
+        if (length(selected) == 0) return(NULL)
 
-    out$gene_name <- names(ids)[match(rownames(out), ids)]
+        ids <- pathway_gene_map()[selected]
+        out <- df[rownames(df) %in% ids, ]
 
-    datatable(
-        out[, c("gene_name", "log2FoldChange", "pvalue", "qvalue", "baseMean")],
-        filter = "top",
-        options = list(pageLength = 15)
-    )
-})
+        ## Add readable gene names
+        out$gene_name <- names(ids)[match(rownames(out), ids)]
+
+        datatable(
+            out[, c("gene_name", "log2FoldChange", "pvalue", "qvalue", "baseMean")],
+            filter = "top",
+            options = list(pageLength = 15)
+        )
+    })
 
 
 
@@ -258,4 +334,5 @@ server <- function(input, output, session) {
 
 shinyApp(ui, server)
 ```
+
 
