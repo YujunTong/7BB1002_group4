@@ -14,14 +14,22 @@ library(DT)
 
 ui <- fluidPage(
 
+    ## Application title displayed at the top of the interface
     titlePanel("RNA-seq DESeq2 Explorer"),
 
     sidebarLayout(
         sidebarPanel(
 
+            ## Upload raw RNA-seq count matrix
+            ## Rows = genes, columns = samples
             fileInput("counts", "Upload count_matrix.tsv"),
+
+            ## Upload sample metadata
+            ## Rows must correspond to columns in the count matrix
             fileInput("sampleinfo", "Upload sample_info.csv"),
 
+            ## Select the metadata column used to define DESeq2 contrasts
+            ## This determines the design formula (~ group)
             selectInput(
                 "contrast_group",
                 "Choose grouping column for DESeq2:",
@@ -29,15 +37,19 @@ ui <- fluidPage(
                 selected = "strain"
             ),
 
+            ## Dynamically generated UI for selecting comparison levels
             uiOutput("level_selector"),
 
+            ## Gene highlighting section for downstream plots and tables
             h4("Select genes to highlight:"),
             uiOutput("gene_select_ui"),
 
+            ## Explicit run button ensures DESeq2 is executed only once per request
             actionButton("run", "Run DESeq2", class = "btn-primary")
         ),
 
         mainPanel(
+            ## Organise results into multiple tabs
             tabsetPanel(
                 tabPanel("PCA Plot", plotOutput("pcaPlot", height = "520px")),
                 tabPanel("MA Plot", plotOutput("maPlot", height = "500px")),
@@ -49,53 +61,89 @@ ui <- fluidPage(
     )
 )
 
-server <- function(input, output, session) {
 
     ### ===================== Data Loading ======================
 
+       ## Reactive loader for the count matrix
+    ## Automatically updates when a new file is uploaded
     counts_data <- reactive({
         req(input$counts)
-        read.table(input$counts$datapath, header = TRUE, row.names = 1, sep = "\t")
-    })
-
-    sample_info <- reactive({
-        req(input$sampleinfo)
-        read.csv(input$sampleinfo$datapath, row.names = 1)
-    })
-
-    ### ===================== Dynamic Contrast UI ======================
-
-    output$level_selector <- renderUI({
-        req(sample_info())
-        cond_col <- input$contrast_group
-        levs <- unique(sample_info()[[cond_col]])
-        selectInput(
-            "contrast",
-            "Choose comparison:",
-            choices = combn(levs, 2, FUN = function(x) paste(x[1], x[2], sep = " vs "))
+        read.table(
+            input$counts$datapath,
+            header = TRUE,
+            row.names = 1,
+            sep = "\t"
         )
     })
 
+    ## Reactive loader for sample metadata
+    ## Row names must match column names of the count matrix
+    sample_info <- reactive({
+        req(input$sampleinfo)
+        read.csv(
+            input$sampleinfo$datapath,
+            row.names = 1
+        )
+    })
+
+
+    ### ===================== Dynamic Contrast UI ======================
+
+       ## Dynamically create the contrast selector
+    ## Based on unique levels in the selected grouping column
+    output$level_selector <- renderUI({
+        req(sample_info())
+
+        cond_col <- input$contrast_group
+
+        ## Extract unique factor levels (e.g. WT vs Mutant)
+        levs <- unique(sample_info()[[cond_col]])
+
+        ## Generate all pairwise comparisons
+        selectInput(
+            "contrast",
+            "Choose comparison:",
+            choices = combn(
+                levs,
+                2,
+                FUN = function(x) paste(x[1], x[2], sep = " vs ")
+            )
+        )
+    })
+
+
     ### ===================== DESeq2 ======================
 
+        ## Run DESeq2 only when the "Run DESeq2" button is clicked
+    ## eventReactive prevents repeated recomputation
     dds_result <- eventReactive(input$run, {
+
         count_matrix <- counts_data()
         meta <- sample_info()
 
+        ## Safety check: ensure sample ordering is identical
         stopifnot(all(colnames(count_matrix) == rownames(meta)))
 
+        ## Construct DESeq2 dataset
         dds <- DESeqDataSetFromMatrix(
             countData = count_matrix,
             colData = meta,
             design = as.formula(paste("~", input$contrast_group))
         )
 
+        ## Filter out very lowly expressed genes
+        ## Improves statistical power and stability
         dds <- dds[rowSums(counts(dds)) > 10, ]
+
+        ## Run normalization, dispersion estimation, and GLM fitting
         DESeq(dds)
     })
 
+
     ### ===================== Pathway Gene Mapping ======================
 
+        ## Manually defined mapping between
+    ## human-readable gene names and internal gene IDs
     pathway_gene_map <- reactive({
         c(
             "ICL1" = "gene:CENPK1137D_3473",
@@ -106,6 +154,9 @@ server <- function(input, output, session) {
         )
     })
 
+### ===================== Gene Selection UI ======================
+
+    ## UI for selecting genes to highlight in plots and tables
     output$gene_select_ui <- renderUI({
         selectizeInput(
             "targetGenes",
@@ -115,119 +166,146 @@ server <- function(input, output, session) {
         )
     })
 
+
     ### ===================== DE Results ======================
 
+        ## Extract DESeq2 results for the selected contrast
+    ## Adds independent q-values using fdrtool
     de_results_df <- reactive({
         req(dds_result())
+
+        ## Parse selected comparison (e.g. WT vs Mutant)
         groups <- strsplit(input$contrast, " vs ")[[1]]
-        res <- results(dds_result(), contrast = c(input$contrast_group, groups[1], groups[2]))
+
+        ## Extract DE results
+        res <- results(
+            dds_result(),
+            contrast = c(input$contrast_group, groups[1], groups[2])
+        )
+
         df <- as.data.frame(res)
-        df$qvalue <- fdrtool(df$pvalue, statistic = "pvalue", plot = FALSE)$qval
+
+        ## Compute q-values from raw p-values
+        df$qvalue <- fdrtool(
+            df$pvalue,
+            statistic = "pvalue",
+            plot = FALSE
+        )$qval
+
         df
     })
 
+
     ### ===================== PCA ======================
     
-output$pcaPlot <- renderPlot({
-  req(dds_result(), sample_info())
+    output$pcaPlot <- renderPlot({
+        req(dds_result(), sample_info())
 
-  vsd <- vst(dds_result(), blind = TRUE)
-  pca <- prcomp(t(assay(vsd)))
-  percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+        ## Variance stabilising transformation
+        ## Reduces mean–variance dependence
+        vsd <- vst(dds_result(), blind = TRUE)
 
-  meta <- sample_info()
+        ## Perform PCA on transformed expression values
+        pca <- prcomp(t(assay(vsd)))
 
-  df <- data.frame(
-    PC1 = pca$x[, 1],
-    PC2 = pca$x[, 2],
-    strain = tolower(trimws(meta$strain)),     # producer / evolved / wt
-    condition = trimws(meta$condition)         # F / Mz / Sz / WT
-  )
+        ## Percentage variance explained by each PC
+        percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
 
-  df$state <- dplyr::case_when(
-    df$strain == "producer" ~ "Parental",
-    df$strain == "evolved"  ~ "Evolved",
-    df$strain == "wt"       ~ "WT"
-  )
-  df$state <- factor(df$state, levels = c("WT", "Parental", "Evolved"))
+        meta <- sample_info()
 
-  df$condition <- factor(df$condition, levels = c("WT", "F", "Mz", "Sz"))
-
-  ggplot(df, aes(PC1, PC2)) +
-
-    ## baseline
-    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
-    geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60") +
-
-    ## PCA spot
-    geom_point(
-      aes(shape = state, colour = condition),
-      size = 4,
-      stroke = 1.2
-    ) +
-
-    ## shape
-    scale_shape_manual(values = c(
-      "WT"        = 15,  
-      "Parental" = 17,  
-      "Evolved"  = 16  
-    )) +
-
-    ## colour
-    scale_colour_manual(values = c(
-      "WT" = "black",
-      "F"  = "#E69F00",
-      "Mz" = "#1B7837",
-      "Sz" = "#0072B2"
-    )) +
-
-  
-    scale_x_continuous(
-      breaks = function(lims) {
-        seq(
-          from = floor(lims[1] / 10) * 10,
-          to   = ceiling(lims[2] / 10) * 10,
-          by   = 10
+        ## Construct plotting data frame
+        df <- data.frame(
+            PC1 = pca$x[, 1],
+            PC2 = pca$x[, 2],
+            strain = tolower(trimws(meta$strain)),
+            condition = trimws(meta$condition)
         )
-      }
-    ) +
-    scale_y_continuous(
-      breaks = function(lims) {
-        seq(
-          from = floor(lims[1] / 10) * 10,
-          to   = ceiling(lims[2] / 10) * 10,
-          by   = 10
+
+        ## Recode strain into biologically meaningful states
+        df$state <- dplyr::case_when(
+            df$strain == "producer" ~ "Parental",
+            df$strain == "evolved"  ~ "Evolved",
+            df$strain == "wt"       ~ "WT"
         )
-      }
-    ) +
 
-    xlab(paste0("PC1 (", percentVar[1], "% variance)")) +
-    ylab(paste0("PC2 (", percentVar[2], "% variance)")) +
+        ## Explicit factor ordering for consistent legend appearance
+        df$state <- factor(df$state, levels = c("WT", "Parental", "Evolved"))
+        df$condition <- factor(df$condition, levels = c("WT", "F", "Mz", "Sz"))
 
-    theme_classic(base_size = 16) +
-    theme(
-      legend.title = element_blank(),
+        ggplot(df, aes(PC1, PC2)) +
 
-      legend.position = "bottom",
-      legend.justification = "left",
+            ## Reference axes
+            geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
+            geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60") +
 
-      legend.box = "horizontal"
-    ) +
+            ## PCA points coloured by condition and shaped by state
+            geom_point(
+                aes(shape = state, colour = condition),
+                size = 4,
+                stroke = 1.2
+            ) +
 
-    guides(
-      colour = guide_legend(ncol = 3, byrow = TRUE),
-      shape  = guide_legend(ncol = 3, byrow = TRUE)
-    )
-})
+            ## Manual shape mapping
+            scale_shape_manual(values = c(
+                "WT"        = 15,
+                "Parental" = 17,
+                "Evolved"  = 16
+            )) +
+
+            ## Manual colour mapping
+            scale_colour_manual(values = c(
+                "WT" = "black",
+                "F"  = "#E69F00",
+                "Mz" = "#1B7837",
+                "Sz" = "#0072B2"
+            )) +
+
+            ## Custom axis tick spacing
+            scale_x_continuous(
+                breaks = function(lims) seq(
+                    floor(lims[1] / 10) * 10,
+                    ceiling(lims[2] / 10) * 10,
+                    by = 10
+                )
+            ) +
+            scale_y_continuous(
+                breaks = function(lims) seq(
+                    floor(lims[1] / 10) * 10,
+                    ceiling(lims[2] / 10) * 10,
+                    by = 10
+                )
+            ) +
+
+            xlab(paste0("PC1 (", percentVar[1], "% variance)")) +
+            ylab(paste0("PC2 (", percentVar[2], "% variance)")) +
+
+            theme_classic(base_size = 16) +
+            theme(
+                legend.title = element_blank(),
+                legend.position = "bottom",
+                legend.justification = "left",
+                legend.box = "horizontal"
+            ) +
+
+            guides(
+                colour = guide_legend(ncol = 3, byrow = TRUE),
+                shape  = guide_legend(ncol = 3, byrow = TRUE)
+            )
+    })
+
 
 
 
 
     ### ===================== MA Plot ======================
 
-    output$maPlot <- renderPlot({
+        output$maPlot <- renderPlot({
         df <- de_results_df()
+
+        ## Log-transform baseMean for MA plot
         df$log10base <- log10(df$baseMean + 1)
+
+        ## Gene IDs selected for highlighting
         highlight_ids <- pathway_gene_map()[input$targetGenes]
 
         ggplot(df, aes(log10base, log2FoldChange)) +
@@ -235,18 +313,24 @@ output$pcaPlot <- renderPlot({
             scale_color_manual(values = c("grey60", "red")) +
             geom_point(
                 data = df[rownames(df) %in% highlight_ids, ],
-                color = "gold", size = 3, shape = 8
+                color = "gold",
+                size = 3,
+                shape = 8
             ) +
             theme_minimal(base_size = 16) +
             xlab("log10(baseMean)") +
             ylab("log2 Fold Change")
     })
 
+
     ### ===================== Volcano Plot ======================
 
-    output$volcanoPlot <- renderPlot({
+        output$volcanoPlot <- renderPlot({
         df <- de_results_df()
+
+        ## Transform p-values for volcano plot
         df$log10p <- -log10(df$pvalue)
+
         highlight_ids <- pathway_gene_map()[input$targetGenes]
 
         ggplot(df, aes(log2FoldChange, log10p)) +
@@ -254,7 +338,9 @@ output$pcaPlot <- renderPlot({
             scale_color_manual(values = c("black", "red")) +
             geom_point(
                 data = df[rownames(df) %in% highlight_ids, ],
-                color = "gold", size = 3, shape = 8
+                color = "gold",
+                size = 3,
+                shape = 8
             ) +
             geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
             geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
@@ -263,8 +349,10 @@ output$pcaPlot <- renderPlot({
             ylab("-log10(p-value)")
     })
 
+
     ### ===================== Tables ======================
 
+        ## Table showing only selected pathway genes
     output$geneStatsTable <- renderDataTable({
         df <- de_results_df()
         ids <- pathway_gene_map()[input$targetGenes]
@@ -273,13 +361,16 @@ output$pcaPlot <- renderPlot({
         datatable(out)
     })
 
+    ## Full differential expression results table
     output$resultsTable <- renderDataTable({
         de_results_df()
     })
 }
 
+
 shinyApp(ui, server)
 
 
 ```
+
 
