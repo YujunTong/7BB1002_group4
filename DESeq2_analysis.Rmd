@@ -1,0 +1,285 @@
+---
+title: "DESeq2 Analyse"
+author: "zach"
+date: "2025-12-10"
+output: html_document
+---
+```{r}
+library(shiny)
+library(DESeq2)
+library(tidyverse)
+library(ggplot2)
+library(fdrtool)
+library(DT)
+
+ui <- fluidPage(
+
+    titlePanel("RNA-seq DESeq2 Explorer"),
+
+    sidebarLayout(
+        sidebarPanel(
+
+            fileInput("counts", "Upload count_matrix.tsv"),
+            fileInput("sampleinfo", "Upload sample_info.csv"),
+
+            selectInput(
+                "contrast_group",
+                "Choose grouping column for DESeq2:",
+                choices = c("strain", "condition", "group"),
+                selected = "strain"
+            ),
+
+            uiOutput("level_selector"),
+
+            h4("Select genes to highlight:"),
+            uiOutput("gene_select_ui"),
+
+            actionButton("run", "Run DESeq2", class = "btn-primary")
+        ),
+
+        mainPanel(
+            tabsetPanel(
+                tabPanel("PCA Plot", plotOutput("pcaPlot", height = "520px")),
+                tabPanel("MA Plot", plotOutput("maPlot", height = "500px")),
+                tabPanel("Volcano Plot", plotOutput("volcanoPlot", height = "500px")),
+                tabPanel("Selected Gene Stats", dataTableOutput("geneStatsTable")),
+                tabPanel("DE Results (All Genes)", dataTableOutput("resultsTable"))
+            )
+        )
+    )
+)
+
+server <- function(input, output, session) {
+
+    ### ===================== Data Loading ======================
+
+    counts_data <- reactive({
+        req(input$counts)
+        read.table(input$counts$datapath, header = TRUE, row.names = 1, sep = "\t")
+    })
+
+    sample_info <- reactive({
+        req(input$sampleinfo)
+        read.csv(input$sampleinfo$datapath, row.names = 1)
+    })
+
+    ### ===================== Dynamic Contrast UI ======================
+
+    output$level_selector <- renderUI({
+        req(sample_info())
+        cond_col <- input$contrast_group
+        levs <- unique(sample_info()[[cond_col]])
+        selectInput(
+            "contrast",
+            "Choose comparison:",
+            choices = combn(levs, 2, FUN = function(x) paste(x[1], x[2], sep = " vs "))
+        )
+    })
+
+    ### ===================== DESeq2 ======================
+
+    dds_result <- eventReactive(input$run, {
+        count_matrix <- counts_data()
+        meta <- sample_info()
+
+        stopifnot(all(colnames(count_matrix) == rownames(meta)))
+
+        dds <- DESeqDataSetFromMatrix(
+            countData = count_matrix,
+            colData = meta,
+            design = as.formula(paste("~", input$contrast_group))
+        )
+
+        dds <- dds[rowSums(counts(dds)) > 10, ]
+        DESeq(dds)
+    })
+
+    ### ===================== Pathway Gene Mapping ======================
+
+    pathway_gene_map <- reactive({
+        c(
+            "ICL1" = "gene:CENPK1137D_3473",
+            "MLS1" = "gene:CENPK1137D_2563",
+            "UGA1" = "gene:CENPK1137D_2989",
+            "UGA2" = "gene:CENPK1137D_4550",
+            "GAD1" = "gene:CENPK1137D_289"
+        )
+    })
+
+    output$gene_select_ui <- renderUI({
+        selectizeInput(
+            "targetGenes",
+            "Highlight genes:",
+            choices = names(pathway_gene_map()),
+            multiple = TRUE
+        )
+    })
+
+    ### ===================== DE Results ======================
+
+    de_results_df <- reactive({
+        req(dds_result())
+        groups <- strsplit(input$contrast, " vs ")[[1]]
+        res <- results(dds_result(), contrast = c(input$contrast_group, groups[1], groups[2]))
+        df <- as.data.frame(res)
+        df$qvalue <- fdrtool(df$pvalue, statistic = "pvalue", plot = FALSE)$qval
+        df
+    })
+
+    ### ===================== PCA ======================
+    
+output$pcaPlot <- renderPlot({
+  req(dds_result(), sample_info())
+
+  vsd <- vst(dds_result(), blind = TRUE)
+  pca <- prcomp(t(assay(vsd)))
+  percentVar <- round(100 * pca$sdev^2 / sum(pca$sdev^2), 1)
+
+  meta <- sample_info()
+
+  df <- data.frame(
+    PC1 = pca$x[, 1],
+    PC2 = pca$x[, 2],
+    strain = tolower(trimws(meta$strain)),     # producer / evolved / wt
+    condition = trimws(meta$condition)         # F / Mz / Sz / WT
+  )
+
+  df$state <- dplyr::case_when(
+    df$strain == "producer" ~ "Parental",
+    df$strain == "evolved"  ~ "Evolved",
+    df$strain == "wt"       ~ "WT"
+  )
+  df$state <- factor(df$state, levels = c("WT", "Parental", "Evolved"))
+
+  df$condition <- factor(df$condition, levels = c("WT", "F", "Mz", "Sz"))
+
+  ggplot(df, aes(PC1, PC2)) +
+
+    ## baseline
+    geom_hline(yintercept = 0, linetype = "dashed", colour = "grey60") +
+    geom_vline(xintercept = 0, linetype = "dashed", colour = "grey60") +
+
+    ## PCA spot
+    geom_point(
+      aes(shape = state, colour = condition),
+      size = 4,
+      stroke = 1.2
+    ) +
+
+    ## shape
+    scale_shape_manual(values = c(
+      "WT"        = 15,  
+      "Parental" = 17,  
+      "Evolved"  = 16  
+    )) +
+
+    ## colour
+    scale_colour_manual(values = c(
+      "WT" = "black",
+      "F"  = "#E69F00",
+      "Mz" = "#1B7837",
+      "Sz" = "#0072B2"
+    )) +
+
+  
+    scale_x_continuous(
+      breaks = function(lims) {
+        seq(
+          from = floor(lims[1] / 10) * 10,
+          to   = ceiling(lims[2] / 10) * 10,
+          by   = 10
+        )
+      }
+    ) +
+    scale_y_continuous(
+      breaks = function(lims) {
+        seq(
+          from = floor(lims[1] / 10) * 10,
+          to   = ceiling(lims[2] / 10) * 10,
+          by   = 10
+        )
+      }
+    ) +
+
+    xlab(paste0("PC1 (", percentVar[1], "% variance)")) +
+    ylab(paste0("PC2 (", percentVar[2], "% variance)")) +
+
+    theme_classic(base_size = 16) +
+    theme(
+      legend.title = element_blank(),
+
+      legend.position = "bottom",
+      legend.justification = "left",
+
+      legend.box = "horizontal"
+    ) +
+
+    guides(
+      colour = guide_legend(ncol = 3, byrow = TRUE),
+      shape  = guide_legend(ncol = 3, byrow = TRUE)
+    )
+})
+
+
+
+
+    ### ===================== MA Plot ======================
+
+    output$maPlot <- renderPlot({
+        df <- de_results_df()
+        df$log10base <- log10(df$baseMean + 1)
+        highlight_ids <- pathway_gene_map()[input$targetGenes]
+
+        ggplot(df, aes(log10base, log2FoldChange)) +
+            geom_point(aes(color = qvalue < 0.1), alpha = 0.5) +
+            scale_color_manual(values = c("grey60", "red")) +
+            geom_point(
+                data = df[rownames(df) %in% highlight_ids, ],
+                color = "gold", size = 3, shape = 8
+            ) +
+            theme_minimal(base_size = 16) +
+            xlab("log10(baseMean)") +
+            ylab("log2 Fold Change")
+    })
+
+    ### ===================== Volcano Plot ======================
+
+    output$volcanoPlot <- renderPlot({
+        df <- de_results_df()
+        df$log10p <- -log10(df$pvalue)
+        highlight_ids <- pathway_gene_map()[input$targetGenes]
+
+        ggplot(df, aes(log2FoldChange, log10p)) +
+            geom_point(aes(color = qvalue < 0.1), alpha = 0.6) +
+            scale_color_manual(values = c("black", "red")) +
+            geom_point(
+                data = df[rownames(df) %in% highlight_ids, ],
+                color = "gold", size = 3, shape = 8
+            ) +
+            geom_hline(yintercept = -log10(0.05), linetype = "dashed") +
+            geom_vline(xintercept = c(-1, 1), linetype = "dashed") +
+            theme_minimal(base_size = 16) +
+            xlab("log2 Fold Change") +
+            ylab("-log10(p-value)")
+    })
+
+    ### ===================== Tables ======================
+
+    output$geneStatsTable <- renderDataTable({
+        df <- de_results_df()
+        ids <- pathway_gene_map()[input$targetGenes]
+        out <- df[rownames(df) %in% ids, ]
+        out$gene <- names(ids)[match(rownames(out), ids)]
+        datatable(out)
+    })
+
+    output$resultsTable <- renderDataTable({
+        de_results_df()
+    })
+}
+
+shinyApp(ui, server)
+
+
+```
+
