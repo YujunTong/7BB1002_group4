@@ -5,7 +5,7 @@ export MAMBA_EXE=/scratch/grp/msc_appbio/Group4_ABCC/tools/micromamba
 eval "$($MAMBA_EXE shell hook --shell bash)"
 micromamba activate /scratch/grp/msc_appbio/Group4_ABCC/envs/yeast_rnaseq_cli
 
-echo "successfully activate environment 2"
+echo "successfully activate environment"
 
 
 # Define the input and output directory
