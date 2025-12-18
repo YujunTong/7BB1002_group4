@@ -5,17 +5,11 @@
 #############################################################
 
 
-# Activate conda environment
-
+# Activate the environment
 export MAMBA_EXE=/scratch/grp/msc_appbio/Group4_ABCC/tools/micromamba
 eval "$($MAMBA_EXE shell hook --shell bash)"
-
-echo "sucessfully activate environment 1"
-
 micromamba activate /scratch/grp/msc_appbio/Group4_ABCC/envs/yeast_rnaseq_cli
-
-echo "successfully activate environment 2"
-
+echo "successfully activate environment"
 
 # Input FASTQ directory
 INPUT_DIR="/scratch/grp/msc_appbio/Group4_ABCC/output/new_cut_adapt"
@@ -28,15 +22,13 @@ mkdir -p "${OUTPUT_DIR}"
 
 echo "Input directory : ${INPUT_DIR}"
 echo "Output directory: ${OUTPUT_DIR}"
-echo "Using 16 CPU threads"
+
 
 # If wildcard matches nothing, avoid literal "*"
 shopt -s nullglob
 
-#############################################################
-# FIND FILES
-#############################################################
 
+# find the files
 # Match files ending with '_trimmed.fastq.gz'
 files=("${INPUT_DIR}"/*_trimmed.fastq.gz)
 
@@ -115,5 +107,7 @@ done
 echo "All remaining samples processed."
 echo "Final output stored in: ${OUTPUT_DIR}"
 
+
+# verify that FaQCs (v.2.08) was used
 which faqcs
 faqcs --version
