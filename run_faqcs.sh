@@ -79,6 +79,14 @@ for f in "${files[@]}"; do
     #########################################################
     # Run FaQCs (single-end mode)
     #########################################################
+    
+   #FaQCs was performed
+   # single-end input
+   # Trim low-quality bases (Phred < 20)
+   # reads shorter than 30bp are removed
+   # reads containing more than 3 Ns will be removed
+   # 4 threads were used
+    
     FaQCs -u "$f" \
           -q 20 \
           --min_L 30 \
