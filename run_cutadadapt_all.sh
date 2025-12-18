@@ -24,6 +24,13 @@ do
 
     echo "Processing: $BASENAME"
 
+
+#Cutadapt was performed
+# remove the adaptor sequence in 3' end
+# Trim low-quality bases (Phred < 20)
+# reads shorter than 30bp was removed
+# 4 threads were used
+
     cutadapt \
         -a $ADAPTER \
         -q 20 \
