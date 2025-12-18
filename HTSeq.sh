@@ -17,10 +17,16 @@ Out_dir="/scratch/grp/msc_appbio/Group4_ABCC/output/htseq_counts"
 # create a new directory
 mkdir -p $Out_dir
 
+
 # Start of the loop
-# for all the bam files, 
-
-
+# run HTSeq-count to generate read counts for unique mapped gene. 
+# Input file format is BAM
+# BAM file is sorted by genomic position
+# Reverse-stranded library
+# Count reads overlapping exons
+# Use 'gene_id' to group exons into genes
+# Input BAM file
+# Gene annotation file (GTF format)
 for bam in ${Bam_dir}/*_Aligned.sortedByCoord.out.bam
 do
     sample=$(basename $bam _Aligned.sortedByCoord.out.bam)
@@ -42,8 +48,8 @@ done
 echo "HTSeq-count finished for all samples."
 
 
-# print software version
-
+#which [software] and [software] --version do not work in checking HTSeq version 
+# Print HTSeq version (v.0.9.1.)
 python3 - <<EOF
 import HTSeq
 print("HTSeq version:", HTSeq.__version__)
